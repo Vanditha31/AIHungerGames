@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai-hunger-games"
+version = "0.1.0"
+description = "A multi-agent LLM arena for studying emergent social behaviors"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+    {name = "AI Hunger Games Team"}
+]
+dependencies = [
+    "pyyaml>=6.0",
+    "httpx>=0.25.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-httpx>=0.21.0",
+]
+
+[project.scripts]
+hunger-games = "ai_hunger_games.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ai_hunger_games*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]

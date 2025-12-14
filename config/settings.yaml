@@ -1,0 +1,19 @@
+# AI Hunger Games default configuration
+# See ARCHITECTURE.md for documentation
+
+# LLM Settings
+model_name: "llama3.1:8b"
+temperature: 0.2
+ollama_base_url: "http://localhost:11434"
+
+# Arena Settings
+num_agents: 8
+rounds_per_elimination: 2
+memory_window: 5
+
+# Reproducibility
+random_seed: 42
+
+# Logging
+log_level: "INFO"
+log_file: "logs/arena.log"
