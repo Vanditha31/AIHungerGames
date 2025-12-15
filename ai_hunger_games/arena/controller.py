@@ -5,6 +5,8 @@ It manages round flow, calls agents in order, and collects responses.
 Voting and elimination logic will be added in Phase 2.
 """
 
+from typing import Optional
+
 from ai_hunger_games.agents.agent import RoundContext
 from ai_hunger_games.agents.registry import AgentRegistry
 from ai_hunger_games.arena.elimination import (
@@ -15,6 +17,7 @@ from ai_hunger_games.arena.elimination import (
 from ai_hunger_games.arena.round_state import RoundState
 from ai_hunger_games.core.config import Settings
 from ai_hunger_games.core.logging_setup import get_logger
+from ai_hunger_games.evolution.replacement import AgentReplacementCoordinator
 from ai_hunger_games.voting import aggregate_votes, collect_votes
 from ai_hunger_games.voting.types import VotingRoundResult
 
@@ -38,15 +41,22 @@ class ArenaController:
     
     MINIMUM_AGENTS = 3
     
-    def __init__(self, registry: AgentRegistry, settings: Settings) -> None:
+    def __init__(
+        self,
+        registry: AgentRegistry,
+        settings: Settings,
+        replacement_coordinator: Optional[AgentReplacementCoordinator] = None
+    ) -> None:
         """Initialize the arena controller.
         
         Args:
             registry: The agent registry containing active agents.
             settings: Configuration settings for the arena.
+            replacement_coordinator: Optional coordinator for agent replacement.
         """
         self._registry = registry
         self._settings = settings
+        self._replacement_coordinator = replacement_coordinator
         self._current_round = 0
         self._round_history: list[RoundState] = []
         self._voting_history: list[VotingRoundResult] = []
@@ -224,6 +234,41 @@ class ArenaController:
         )
         
         return total_votes / len(self._voting_history)
+    
+    def execute_replacement(
+        self,
+        elimination_result: EliminationResult
+    ) -> None:
+        """Execute agent replacement after elimination.
+        
+        If a replacement coordinator is configured, removes the eliminated
+        agent and creates a replacement with a fresh personality.
+        
+        Args:
+            elimination_result: The elimination decision.
+        """
+        if not self._replacement_coordinator:
+            logger.warning(
+                "No replacement coordinator configured, "
+                "eliminated agent will not be replaced"
+            )
+            return
+        
+        agent_id = elimination_result.eliminated_agent_id
+        rounds_survived = self._current_round
+        
+        self._replacement_coordinator.replace_agent(
+            eliminated_agent_id=agent_id,
+            rounds_survived=rounds_survived,
+            total_votes_received=elimination_result.cumulative_votes,
+            elimination_round=self._current_round,
+            was_tie=elimination_result.was_tie
+        )
+        
+        logger.info(
+            f"Agent replacement executed for '{agent_id}' "
+            f"after {rounds_survived} rounds"
+        )
     
     def get_round_history(self) -> list[RoundState]:
         """Get the history of all completed rounds.
