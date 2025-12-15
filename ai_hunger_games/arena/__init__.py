@@ -4,11 +4,19 @@ from ai_hunger_games.arena.controller import (
     ArenaController,
     InsufficientAgentsError,
 )
+from ai_hunger_games.arena.elimination import (
+    EliminationCandidate,
+    EliminationResult,
+    determine_elimination,
+)
 from ai_hunger_games.arena.round_state import AgentResponse, RoundState
 
 __all__ = [
     "AgentResponse",
     "ArenaController",
+    "EliminationCandidate",
+    "EliminationResult",
     "InsufficientAgentsError",
     "RoundState",
+    "determine_elimination",
 ]

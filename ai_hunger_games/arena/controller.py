@@ -7,9 +7,16 @@ Voting and elimination logic will be added in Phase 2.
 
 from ai_hunger_games.agents.agent import RoundContext
 from ai_hunger_games.agents.registry import AgentRegistry
+from ai_hunger_games.arena.elimination import (
+    EliminationCandidate,
+    EliminationResult,
+    determine_elimination,
+)
 from ai_hunger_games.arena.round_state import RoundState
 from ai_hunger_games.core.config import Settings
 from ai_hunger_games.core.logging_setup import get_logger
+from ai_hunger_games.voting import aggregate_votes, collect_votes
+from ai_hunger_games.voting.types import VotingRoundResult
 
 
 logger = get_logger(__name__)
@@ -42,6 +49,8 @@ class ArenaController:
         self._settings = settings
         self._current_round = 0
         self._round_history: list[RoundState] = []
+        self._voting_history: list[VotingRoundResult] = []
+        self._cumulative_votes: dict[str, int] = {}
         
         logger.info(
             f"ArenaController initialized with {registry.count()} agents"
@@ -120,6 +129,101 @@ class ArenaController:
             round_state.add_response(agent.agent_id, response)
         
         return round_state
+    
+    def conduct_voting(
+        self,
+        round_state: RoundState,
+        vote_choices: dict[str, str]
+    ) -> VotingRoundResult:
+        """Conduct voting for a completed round.
+        
+        Args:
+            round_state: The completed round state.
+            vote_choices: Mapping of voter_id to voted_for_id.
+        
+        Returns:
+            Aggregated voting results.
+        """
+        votes = collect_votes(round_state, vote_choices)
+        
+        agent_ids = [resp.agent_id for resp in round_state.responses]
+        result = aggregate_votes(votes, round_state.round_number, agent_ids)
+        
+        self._update_cumulative_votes(result)
+        self._voting_history.append(result)
+        
+        logger.info(
+            f"Voting complete for round {round_state.round_number}: "
+            f"{len(votes)} votes cast"
+        )
+        
+        return result
+    
+    def _update_cumulative_votes(self, result: VotingRoundResult) -> None:
+        """Update cumulative vote counts."""
+        for vote_result in result.results:
+            if vote_result.agent_id not in self._cumulative_votes:
+                self._cumulative_votes[vote_result.agent_id] = 0
+            self._cumulative_votes[vote_result.agent_id] += (
+                vote_result.votes_received
+            )
+    
+    def determine_elimination_candidate(
+        self
+    ) -> EliminationResult:
+        """Determine which agent should be eliminated.
+        
+        Uses cumulative votes and historical averages for tie-breaking.
+        
+        Returns:
+            Elimination result with selected agent.
+        """
+        if not self._voting_history:
+            raise ValueError(
+                "Cannot determine elimination without voting history"
+            )
+        
+        candidates = self._build_elimination_candidates()
+        result = determine_elimination(candidates, self._settings.random_seed)
+        
+        logger.info(
+            f"Elimination determined: '{result.eliminated_agent_id}' "
+            f"with {result.cumulative_votes} votes"
+        )
+        
+        return result
+    
+    def _build_elimination_candidates(
+        self
+    ) -> list[EliminationCandidate]:
+        """Build elimination candidates with scores."""
+        candidates = []
+        
+        for agent_id in self._registry.get_ids():
+            cumulative = self._cumulative_votes.get(agent_id, 0)
+            avg = self._calculate_historical_average(agent_id)
+            
+            candidates.append(
+                EliminationCandidate(
+                    agent_id=agent_id,
+                    cumulative_votes=cumulative,
+                    historical_average=avg
+                )
+            )
+        
+        return candidates
+    
+    def _calculate_historical_average(self, agent_id: str) -> float:
+        """Calculate historical vote average for an agent."""
+        if not self._voting_history:
+            return 0.0
+        
+        total_votes = sum(
+            result.get_votes_for(agent_id)
+            for result in self._voting_history
+        )
+        
+        return total_votes / len(self._voting_history)
     
     def get_round_history(self) -> list[RoundState]:
         """Get the history of all completed rounds.
