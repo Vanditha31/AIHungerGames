@@ -18,6 +18,7 @@ from ai_hunger_games.arena.round_state import RoundState
 from ai_hunger_games.core.config import Settings
 from ai_hunger_games.core.logging_setup import get_logger
 from ai_hunger_games.evolution.replacement import AgentReplacementCoordinator
+from ai_hunger_games.observability.logger import EventLogger
 from ai_hunger_games.voting import aggregate_votes, collect_votes
 from ai_hunger_games.voting.types import VotingRoundResult
 
@@ -45,7 +46,8 @@ class ArenaController:
         self,
         registry: AgentRegistry,
         settings: Settings,
-        replacement_coordinator: Optional[AgentReplacementCoordinator] = None
+        replacement_coordinator: Optional[AgentReplacementCoordinator] = None,
+        event_logger: Optional[EventLogger] = None
     ) -> None:
         """Initialize the arena controller.
         
@@ -53,10 +55,12 @@ class ArenaController:
             registry: The agent registry containing active agents.
             settings: Configuration settings for the arena.
             replacement_coordinator: Optional coordinator for agent replacement.
+            event_logger: Optional event logger for observability.
         """
         self._registry = registry
         self._settings = settings
         self._replacement_coordinator = replacement_coordinator
+        self._event_logger = event_logger
         self._current_round = 0
         self._round_history: list[RoundState] = []
         self._voting_history: list[VotingRoundResult] = []
@@ -101,6 +105,13 @@ class ArenaController:
             f"'{prompt[:50]}...'"
         )
         
+        # Emit round started event
+        if self._event_logger:
+            self._event_logger.log_round_started(
+                round_number=self._current_round,
+                prompt=prompt
+            )
+        
         round_state = RoundState(
             round_number=self._current_round,
             prompt=prompt
@@ -137,6 +148,14 @@ class ArenaController:
             
             response = agent.generate_response(context)
             round_state.add_response(agent.agent_id, response)
+            
+            # Emit agent responded event
+            if self._event_logger:
+                self._event_logger.log_agent_responded(
+                    round_number=round_state.round_number,
+                    agent_id=agent.agent_id,
+                    response=response
+                )
         
         return round_state
     
@@ -156,8 +175,27 @@ class ArenaController:
         """
         votes = collect_votes(round_state, vote_choices)
         
+        # Emit individual vote events
+        if self._event_logger:
+            for vote in votes:
+                self._event_logger.log_vote_cast(
+                    round_number=vote.round_number,
+                    voter_id=vote.voter_id,
+                    voted_for_id=vote.voted_for_id
+                )
+        
         agent_ids = [resp.agent_id for resp in round_state.responses]
         result = aggregate_votes(votes, round_state.round_number, agent_ids)
+        
+        # Emit vote summary event
+        if self._event_logger:
+            vote_counts = {
+                vr.agent_id: vr.votes_received for vr in result.results
+            }
+            self._event_logger.log_vote_summary(
+                round_number=round_state.round_number,
+                vote_counts=vote_counts
+            )
         
         self._update_cumulative_votes(result)
         self._voting_history.append(result)
@@ -195,6 +233,15 @@ class ArenaController:
         
         candidates = self._build_elimination_candidates()
         result = determine_elimination(candidates, self._settings.random_seed)
+        
+        # Emit elimination event
+        if self._event_logger:
+            self._event_logger.log_elimination_decided(
+                round_number=self._current_round,
+                eliminated_agent_id=result.eliminated_agent_id,
+                cumulative_votes=result.cumulative_votes,
+                was_tie=result.was_tie
+            )
         
         logger.info(
             f"Elimination determined: '{result.eliminated_agent_id}' "
@@ -257,6 +304,11 @@ class ArenaController:
         agent_id = elimination_result.eliminated_agent_id
         rounds_survived = self._current_round
         
+        # Get old agent for logging before replacement
+        if self._event_logger:
+            old_agent = self._registry.get(agent_id)
+            old_personality_dict = old_agent.personality.to_dict()
+        
         self._replacement_coordinator.replace_agent(
             eliminated_agent_id=agent_id,
             rounds_survived=rounds_survived,
@@ -264,6 +316,18 @@ class ArenaController:
             elimination_round=self._current_round,
             was_tie=elimination_result.was_tie
         )
+        
+        # Emit replacement event
+        if self._event_logger:
+            new_agent = self._registry.get(agent_id)
+            new_personality_dict = new_agent.personality.to_dict()
+            
+            self._event_logger.log_agent_replaced(
+                round_number=self._current_round,
+                agent_id=agent_id,
+                old_personality=old_personality_dict,
+                new_personality=new_personality_dict
+            )
         
         logger.info(
             f"Agent replacement executed for '{agent_id}' "
